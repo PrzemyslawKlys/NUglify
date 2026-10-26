@@ -1333,6 +1333,35 @@ function functionB() { O.myFunction(key); }
         }
 
         [Test]
+        public void Bug479()
+        {
+            const string source = "var NS;(function(NS){class A{h=NS.d(({ target })=>{this.f=$(target).val()},100)}NS.A=A})(NS||(NS={}));";
+            var result = Uglify.Js(source, new CodeSettings { ScriptVersion = ScriptVersion.None });
+            Assert.That(result.HasErrors, Is.False,
+                () => "Uglify errors:\n" + string.Join("\n", result.Errors));
+            Assert.That(result.Code, Is.EqualTo("var NS;(function(n){class t{h=n.d(({target:n})=>{this.f=$(n).val()},100);}n.A=t})(NS||(NS={}))"));
+
+            AssertMinified("class A { h = ({ target }) => target; }",
+                "class A{h=({target:n})=>n;}");
+            AssertMinified("class A { static h = ({ target }) => target; }",
+                "class A{static h=({target:n})=>n;}");
+            AssertMinified("class A { [(({ target }) => target)(event)] = 0; }",
+                "class A{[(({target:n})=>n)(event)]=0;}");
+            AssertMinified("class A { h = ({ outer: { target } }) => ({ target }); }",
+                "class A{h=({outer:{target:n}})=>({target:n});}");
+        }
+
+        [Test]
+        public void Bug479ClassFieldOptimization()
+        {
+            AssertMinified("class A { h = 1 + 2; }", "class A{h=3;}");
+            AssertMinified("class A { h = (1 + 2); }", "class A{h=3;}");
+            AssertMinified("class A { h = true ? 1 : 2; }", "class A{h=1;}");
+            AssertMinified("class A { static h = 1 + 2; }", "class A{static h=3;}");
+            AssertMinified("class A { ['a' + 'b'] = 1 + 2; }", "class A{[\"ab\"]=3;}");
+        }
+
+        [Test]
         public void ScopeReorderingHandlesStaleInsertionPointCandidates()
         {
             foreach (var source in new[]
