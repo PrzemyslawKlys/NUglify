@@ -1,5 +1,8 @@
 # Changelog
 
+## v1.23.5
+- Fix shorthand destructuring renaming in class fields
+
 ## v1.23.4
 - Fix trailing commas in arrow function parameter lists
 
