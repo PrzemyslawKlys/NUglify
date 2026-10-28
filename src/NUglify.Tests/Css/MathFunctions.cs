@@ -5,6 +5,35 @@ namespace NUglify.Tests.Css
     [TestFixture]
     public class MathFunctions
     {
+        [TestCase("abs(10px var(--operator) -1px)")]
+        [TestCase("abs(10px var(--operator) +1px)")]
+        [TestCase("abs(var(--empty,)-1px)")]
+        [TestCase("abs(var(--empty,)+1px)")]
+        [TestCase("abs(10px var(--operator) -.5px)")]
+        public void PreservesSignedNumbersFollowingVariableOperators(string expression)
+        {
+            var result = Uglify.Css(".x { width: " + expression + "; }");
+            Assert.That(result.HasErrors, Is.False);
+            Assert.That(result.Code, Does.Contain(expression));
+        }
+
+        [TestCase("abs(var(--empty,)10px)")]
+        [TestCase("min(var(--empty,)0px,1px)")]
+        public void AllowsAdjacentOperandsAfterVariableSubstitution(string expression)
+        {
+            var result = Uglify.Css(".x { width: " + expression + "; }");
+            Assert.That(result.HasErrors, Is.False);
+            Assert.That(result.Code, Does.Contain(expression));
+        }
+
+        [Test]
+        public void PreservesBinaryOperatorWhitespaceInVariableMath()
+        {
+            var result = Uglify.Css(".x { width: calc(var(--length) - 1px + 2px); }");
+            Assert.That(result.HasErrors, Is.False);
+            Assert.That(result.Code, Does.Contain("calc(var(--length) - 1px + 2px)"));
+        }
+
         [Test]
         public void AllowsMathArgumentsCompletedByVariableSubstitution()
         {

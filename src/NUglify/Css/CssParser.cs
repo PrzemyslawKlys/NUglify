@@ -5400,9 +5400,11 @@ namespace NUglify.Css
                 // adjacent operands cannot be validated until substitution.
                 while (parsed == Parsed.True)
                 {
-                    if (m_skippedSpace && (m_mathContainsVariable || IsCurrentVarFunction()) && IsMathUnitStart())
+                    if ((m_mathContainsVariable || IsCurrentVarFunction()) &&
+                        (IsMathUnitStart() || IsSignedMathUnit()))
                     {
-                        Append(' ');
+                        if (m_skippedSpace)
+                            Append(' ');
                         parsed = ParseProduct();
                         continue;
                     }
@@ -5440,6 +5442,26 @@ namespace NUglify.Css
 
         bool IsCurrentVarFunction() => CurrentTokenType == TokenType.Function &&
             string.Equals(CurrentTokenText, "var(", StringComparison.OrdinalIgnoreCase);
+
+        bool IsSignedMathUnit()
+        {
+            if (CurrentTokenType != TokenType.Character || (CurrentTokenText != "+" && CurrentTokenText != "-"))
+                return false;
+
+            var next = PeekSignificantTokens(1);
+            if (next.Count == 0 || m_peekBuffer == null || m_peekBuffer.Peek().Token != next[0])
+                return false;
+
+            switch (next[0].TokenType)
+            {
+                case TokenType.Number: case TokenType.Percentage: case TokenType.Dimension:
+                case TokenType.RelativeLength: case TokenType.AbsoluteLength: case TokenType.Angle:
+                case TokenType.Time: case TokenType.Resolution: case TokenType.Frequency:
+                    return true;
+                default:
+                    return false;
+            }
+        }
 
         bool IsMathUnitStart()
         {
