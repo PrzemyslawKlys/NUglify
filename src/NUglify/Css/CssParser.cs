@@ -41,6 +41,8 @@ namespace NUglify.Css
         bool m_skippedSpace;
 
         bool m_insideCalc;
+        bool m_mathContainsVariable;
+        bool m_parsingCustomProperty;
         bool parsingZeroReducibleProperty;
         // not to be confused with "non-reducible"
         bool parsingNoneReducibleProperty;
@@ -4093,49 +4095,56 @@ namespace NUglify.Css
 
                 parsingZeroReducibleProperty = IsZeroReducibleProperty(propertyName);
                 parsingNoneReducibleProperty = IsNoneReducibleProperty(propertyName);
-
-                SkipSpace();
-
-                if (m_valueReplacement != null)
+                m_parsingCustomProperty = propertyName.StartsWith("--", StringComparison.Ordinal);
+                try
                 {
-                    // output the replacement string
-                    Append(m_valueReplacement);
+                    SkipSpace();
 
-                    // clear the replacement string
-                    m_valueReplacement = null;
-
-                    // set the no-output flag, parse the value, the reset the flag.
-                    // we don't care if it actually finds a value or not
-                    var notOutputting = m_noOutput;
-                    m_noOutput = true;
-                    ParseExpr();
-                    m_noOutput = notOutputting;
-                }
-                else 
-                {
-                    // valueless variable declarations are legal
-	                if (propertyName.StartsWith("--") && (CurrentTokenText == ";" || CurrentTokenText == "}"))
-		                return Parsed.True;
-
-	                m_parsingColorValue = MightContainColorNames(propertyName);
-                    parsed = ParseExpr();
-                    m_parsingColorValue = false;
-
-                    if (parsed != Parsed.True)
+                    if (m_valueReplacement != null)
                     {
-                        ReportError(0, CssErrorCode.ExpectedExpression, CurrentTokenText);
-                        SkipToEndOfDeclaration();
-                        return Parsed.True;
+                        // output the replacement string
+                        Append(m_valueReplacement);
+
+                        // clear the replacement string
+                        m_valueReplacement = null;
+
+                        // set the no-output flag, parse the value, the reset the flag.
+                        // we don't care if it actually finds a value or not
+                        var notOutputting = m_noOutput;
+                        m_noOutput = true;
+                        ParseExpr();
+                        m_noOutput = notOutputting;
+                    }
+                    else
+                    {
+                        // valueless variable declarations are legal
+                        if (propertyName.StartsWith("--") && (CurrentTokenText == ";" || CurrentTokenText == "}"))
+                            return Parsed.True;
+
+                        m_parsingColorValue = MightContainColorNames(propertyName);
+                        parsed = ParseExpr();
+                        m_parsingColorValue = false;
+
+                        if (parsed != Parsed.True)
+                        {
+                            ReportError(0, CssErrorCode.ExpectedExpression, CurrentTokenText);
+                            SkipToEndOfDeclaration();
+                            return Parsed.True;
+                        }
+
+                        parsingZeroReducibleProperty = true;
                     }
 
-                    parsingZeroReducibleProperty = true;
+                    // optional
+                    ParsePrio();
+
+                    parsed = Parsed.True;
+                    m_noOutput = false;
                 }
-
-                // optional
-                ParsePrio();
-
-                parsed = Parsed.True;
-                m_noOutput = false;
+                finally
+                {
+                    m_parsingCustomProperty = false;
+                }
             }
             return parsed;
         }
@@ -4647,10 +4656,19 @@ namespace NUglify.Css
             if (CurrentTokenType == TokenType.Function)
             {
                 var functionText = GetRoot(CurrentTokenText);
+                if (m_parsingCustomProperty && IsMathFunction(functionText))
+                    return ParseCustomPropertyFunction();
                 var previousInsideCalc = m_insideCalc;
+                var previousMathContainsVariable = m_mathContainsVariable;
                 var isMath = IsMathFunction(functionText);
+                if (m_insideCalc && string.Equals(functionText, "var(", StringComparison.OrdinalIgnoreCase))
+                    m_mathContainsVariable = true;
                 if (isMath)
+                {
+                    if (!previousInsideCalc)
+                        m_mathContainsVariable = false;
                     m_insideCalc = true;
+                }
                 try
                 {
                 switch (functionText.ToUpperInvariant())
@@ -4722,9 +4740,35 @@ namespace NUglify.Css
                 finally
                 {
                     m_insideCalc = previousInsideCalc;
+                    if (isMath && !previousInsideCalc)
+                        m_mathContainsVariable = previousMathContainsVariable;
                 }
             }
             return parsed;
+        }
+
+        Parsed ParseCustomPropertyFunction()
+        {
+            // A custom property holds tokens, not a value parsed against the
+            // named function's grammar. Keep the function's spelling and tokens.
+            var depth = 0;
+            while (!AtEof)
+            {
+                if (CurrentTokenType == TokenType.Function ||
+                    (CurrentTokenType == TokenType.Character && CurrentTokenText == "("))
+                    depth++;
+                else if (CurrentTokenType == TokenType.Character && CurrentTokenText == ")")
+                    depth--;
+                Append(CurrentTokenText, TokenType.None);
+                if (depth == 0)
+                {
+                    SkipSpace();
+                    return Parsed.True;
+                }
+                NextRawToken();
+            }
+            ReportError(0, CssErrorCode.ExpectedClosingParenthesis, CurrentTokenText);
+            return Parsed.False;
         }
 
         static bool IsMathFunction(string functionText)
@@ -5352,9 +5396,19 @@ namespace NUglify.Css
             var parsed = ParseProduct();
             if (parsed == Parsed.True)
             {
-                // keep going while we have sum operators
-                while (CurrentTokenType == TokenType.Character && (CurrentTokenText == "+" || CurrentTokenText == "-"))
+                // A var() may substitute an empty value or multiple tokens, so
+                // adjacent operands cannot be validated until substitution.
+                while (parsed == Parsed.True)
                 {
+                    if (m_skippedSpace && (m_mathContainsVariable || IsCurrentVarFunction()) && IsMathUnitStart())
+                    {
+                        Append(' ');
+                        parsed = ParseProduct();
+                        continue;
+                    }
+                    if (CurrentTokenType != TokenType.Character || (CurrentTokenText != "+" && CurrentTokenText != "-"))
+                        break;
+
                     // plus and minus operators need space around them.
                     Append(' ');
                     AppendCurrent();
@@ -5382,6 +5436,25 @@ namespace NUglify.Css
             }
 
             return parsed;
+        }
+
+        bool IsCurrentVarFunction() => CurrentTokenType == TokenType.Function &&
+            string.Equals(CurrentTokenText, "var(", StringComparison.OrdinalIgnoreCase);
+
+        bool IsMathUnitStart()
+        {
+            switch (CurrentTokenType)
+            {
+                case TokenType.Number: case TokenType.Percentage: case TokenType.Dimension:
+                case TokenType.RelativeLength: case TokenType.AbsoluteLength: case TokenType.Angle:
+                case TokenType.Time: case TokenType.Resolution: case TokenType.Frequency:
+                case TokenType.Identifier: case TokenType.Function:
+                    return true;
+                case TokenType.Character:
+                    return CurrentTokenText == "(";
+                default:
+                    return false;
+            }
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Globalization", "CA1308:NormalizeStringsToUppercase", Justification="we want lower-case output")]

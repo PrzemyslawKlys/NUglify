@@ -6,6 +6,47 @@ namespace NUglify.Tests.Css
     public class MathFunctions
     {
         [Test]
+        public void AllowsMathArgumentsCompletedByVariableSubstitution()
+        {
+            var result = Uglify.Css(".x { --empty: ; width: abs(var(--empty) 10px); }");
+            Assert.That(result.HasErrors, Is.False);
+            Assert.That(result.Code, Does.Contain("abs(var(--empty) 10px)"));
+        }
+
+        [Test]
+        public void PreservesArbitraryCustomPropertyFunctionsAndCasing()
+        {
+            var result = Uglify.Css(".x { --payload: ROUND(\"anything\"); }");
+            Assert.That(result.HasErrors, Is.False);
+            Assert.That(result.Code, Does.Contain("ROUND(\"anything\")"));
+        }
+
+        [TestCase(".x{--x:CALC(\"anything\");}", "CALC(\"anything\")")]
+        [TestCase(".x{--x:ROUND(FOO([1,2]));}", "ROUND(FOO([1,2]))")]
+        [TestCase(".x{--x:calc(1px + 0px);}", "calc(1px + 0px)")]
+        [TestCase(".x{--x:MIN(0px, 2px);width:0px;}", "MIN(0px, 2px)")]
+        [TestCase(".x{--x:calc(1px + 0px);width:0px;}", "width:0}")]
+        public void PreservesCustomPropertyMathTokens(string css, string expected)
+        {
+            var result = Uglify.Css(css);
+            Assert.That(result.HasErrors, Is.False);
+            Assert.That(result.Code, Does.Contain(expected));
+        }
+
+        [TestCase("abs(10px var(--empty))")]
+        [TestCase("min(var(--empty) 0px, 2px)")]
+        [TestCase("calc(var(--empty) 0px + 1px)")]
+        [TestCase("round(nearest, var(--empty) 0px, 1px)")]
+        [TestCase("calc(10px var(--operator) 1px)")]
+        public void PreservesVariableDependentMath(string expression)
+        {
+            var result = Uglify.Css(".x{width:" + expression + "}");
+            Assert.That(result.HasErrors, Is.False);
+            Assert.That(result.Code, Does.Contain("var(--"));
+            Assert.That(result.Code, Does.Contain("0px").Or.Contain("10px"));
+        }
+
+        [Test]
         public void PreservesNestedMathAndBinaryOperatorWhitespace()
         {
             const string css = ".frame { font-size: min(var(--max), max(var(--fit), var(--min) - clamp(0px, (var(--fit) - var(--min)) * 1000, 1px) * 1000)); }";
