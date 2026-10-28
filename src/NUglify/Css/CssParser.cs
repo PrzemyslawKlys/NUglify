@@ -4647,6 +4647,12 @@ namespace NUglify.Css
             if (CurrentTokenType == TokenType.Function)
             {
                 var functionText = GetRoot(CurrentTokenText);
+                var previousInsideCalc = m_insideCalc;
+                var isMath = IsMathFunction(functionText);
+                if (isMath)
+                    m_insideCalc = true;
+                try
+                {
                 switch (functionText.ToUpperInvariant())
                 {
                     case "RGB(":
@@ -4668,6 +4674,26 @@ namespace NUglify.Css
 
                     case "CLAMP(":
                         parsed = ParseClamp();
+                        break;
+
+                    case "ROUND(":
+                    case "MOD(":
+                    case "REM(":
+                    case "ABS(":
+                    case "SIGN(":
+                    case "SIN(":
+                    case "COS(":
+                    case "TAN(":
+                    case "ASIN(":
+                    case "ACOS(":
+                    case "ATAN(":
+                    case "ATAN2(":
+                    case "POW(":
+                    case "SQRT(":
+                    case "HYPOT(":
+                    case "LOG(":
+                    case "EXP(":
+                        parsed = ParseMathFunction();
                         break;
 
                     default:
@@ -4692,8 +4718,49 @@ namespace NUglify.Css
                         }
                         break;
                 }
+                }
+                finally
+                {
+                    m_insideCalc = previousInsideCalc;
+                }
             }
             return parsed;
+        }
+
+        static bool IsMathFunction(string functionText)
+        {
+            switch (functionText.ToUpperInvariant())
+            {
+                case "CALC(": case "MIN(": case "MAX(": case "CLAMP(":
+                case "ROUND(": case "MOD(": case "REM(": case "ABS(": case "SIGN(":
+                case "SIN(": case "COS(": case "TAN(": case "ASIN(": case "ACOS(":
+                case "ATAN(": case "ATAN2(": case "POW(": case "SQRT(":
+                case "HYPOT(": case "LOG(": case "EXP(":
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        Parsed ParseMathFunction()
+        {
+            Append(CurrentTokenText.ToLowerInvariant());
+            SkipSpace();
+            var parsed = ParseSum();
+            while (parsed == Parsed.True && CurrentTokenType == TokenType.Character && CurrentTokenText == ",")
+            {
+                AppendCurrent();
+                SkipSpace();
+                parsed = ParseSum();
+            }
+            if (parsed == Parsed.True && CurrentTokenType == TokenType.Character && CurrentTokenText == ")")
+            {
+                AppendCurrent();
+                SkipSpace();
+                return Parsed.True;
+            }
+            ReportError(0, CssErrorCode.ExpectedClosingParenthesis, CurrentTokenText);
+            return Parsed.False;
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Maintainability", "CA1502:AvoidExcessiveComplexity")]
@@ -5368,7 +5435,6 @@ namespace NUglify.Css
             if (CurrentTokenType == TokenType.Function
                 && string.Compare(GetRoot(CurrentTokenText), "calc(", StringComparison.OrdinalIgnoreCase) == 0)
             {
-                m_insideCalc = true;
                 Append(CurrentTokenText.ToLowerInvariant());
                 SkipSpace();
 
@@ -5389,7 +5455,6 @@ namespace NUglify.Css
                     ReportError(0, CssErrorCode.ExpectedClosingParenthesis, CurrentTokenText);
                 }
 
-                m_insideCalc = false;
             }
 
             return parsed;
@@ -5487,7 +5552,7 @@ namespace NUglify.Css
                 {
                     NewLine();
                 }
-                m_currentToken = PullRawToken(!m_insideCalc);
+                m_currentToken = PullRawToken(!m_insideCalc && parsingZeroReducibleProperty);
                 if (EchoWriter != null)
                 {
                     EchoWriter.Write(CurrentTokenText);
@@ -5501,7 +5566,7 @@ namespace NUglify.Css
         // just skip to the next token; don't skip over comments
         TokenType NextRawToken()
         {
-            m_currentToken = PullRawToken(!m_insideCalc);
+            m_currentToken = PullRawToken(!m_insideCalc && parsingZeroReducibleProperty);
             if (EchoWriter != null)
             {
                 EchoWriter.Write(CurrentTokenText);
@@ -5616,7 +5681,7 @@ namespace NUglify.Css
             try
             {
                 // get the next token
-                m_currentToken = PullRawToken(!m_insideCalc);
+                m_currentToken = PullRawToken(!m_insideCalc && parsingZeroReducibleProperty);
                 if (EchoWriter != null)
                 {
                     EchoWriter.Write(CurrentTokenText);
@@ -5703,7 +5768,7 @@ namespace NUglify.Css
                     }
 
                     // next token
-                    m_currentToken = PullRawToken(!m_insideCalc);
+                    m_currentToken = PullRawToken(!m_insideCalc && parsingZeroReducibleProperty);
                     if (EchoWriter != null)
                     {
                         EchoWriter.Write(CurrentTokenText);
